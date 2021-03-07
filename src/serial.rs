@@ -63,6 +63,8 @@ pub enum Event {
     Rxne,
     /// New data can be sent
     Txe,
+    /// Idle line detected
+    Idle,
 }
 
 /// Serial error
@@ -361,6 +363,7 @@ macro_rules! hal {
                     match event {
                         Event::Rxne => self.usart.cr1.modify(|_, w| w.rxneie().set_bit()),
                         Event::Txe => self.usart.cr1.modify(|_, w| w.txeie().set_bit()),
+                        Event::Idle => self.usart.cr1.modify(|_, w| w.idleie().set_bit()),
                     }
                 }
 
@@ -371,6 +374,30 @@ macro_rules! hal {
                     match event {
                         Event::Rxne => self.usart.cr1.modify(|_, w| w.rxneie().clear_bit()),
                         Event::Txe => self.usart.cr1.modify(|_, w| w.txeie().clear_bit()),
+                        Event::Idle => self.usart.cr1.modify(|_, w| w.idleie().clear_bit()),
+                    }
+                }
+
+                pub fn which_event(&mut self) -> Option<Event> {
+                    let cr = self.usart.cr1.read();
+                    let sr = self.usart.sr.read();
+                    
+                    let event = if sr.rxne().bit_is_set() && cr.rxneie().bit_is_set() {
+                        Some(Event::Rxne)
+                    } else if sr.txe().bit_is_set() && cr.txeie().bit_is_set() {
+                        Some(Event::Txe)
+                    } else if sr.idle().bit_is_set() && cr.idleie().bit_is_set() {
+                        Some(Event::Idle)
+                    } else {
+                        None
+                    };
+                    event
+                }
+                
+                pub fn clear_event(&mut self) {
+                    unsafe {
+                        ptr::read_volatile(&self.usart.sr as *const _ as *const _);
+                        ptr::read_volatile(&self.usart.dr as *const _ as *const _);
                     }
                 }
 
