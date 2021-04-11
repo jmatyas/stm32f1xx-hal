@@ -58,6 +58,7 @@ use crate::rcc::{sealed::RccBus, Clocks, Enable, GetBusFreq, Reset, APB1, APB2};
 use crate::time::{Bps, U32Ext};
 
 /// Interrupt event
+#[derive(Debug)]
 pub enum Event {
     /// New data has been received
     Rxne,
@@ -65,6 +66,7 @@ pub enum Event {
     Txe,
     /// Idle line detected
     Idle,
+    Tc,
 }
 
 /// Serial error
@@ -364,6 +366,7 @@ macro_rules! hal {
                         Event::Rxne => self.usart.cr1.modify(|_, w| w.rxneie().set_bit()),
                         Event::Txe => self.usart.cr1.modify(|_, w| w.txeie().set_bit()),
                         Event::Idle => self.usart.cr1.modify(|_, w| w.idleie().set_bit()),
+                        Event::Tc => self.usart.cr1.modify(|_, w| w.tcie().set_bit()),
                     }
                 }
 
@@ -375,6 +378,7 @@ macro_rules! hal {
                         Event::Rxne => self.usart.cr1.modify(|_, w| w.rxneie().clear_bit()),
                         Event::Txe => self.usart.cr1.modify(|_, w| w.txeie().clear_bit()),
                         Event::Idle => self.usart.cr1.modify(|_, w| w.idleie().clear_bit()),
+                        Event::Tc => self.usart.cr1.modify(|_, w| w.tcie().clear_bit()),
                     }
                 }
 
@@ -388,6 +392,8 @@ macro_rules! hal {
                         Some(Event::Txe)
                     } else if sr.idle().bit_is_set() && cr.idleie().bit_is_set() {
                         Some(Event::Idle)
+                    } else if sr.tc().bit_is_set() && cr.txeie().bit_is_set() {
+                        Some(Event::Tc)
                     } else {
                         None
                     };
@@ -428,15 +434,69 @@ macro_rules! hal {
                 pub fn unlisten(&mut self) {
                     unsafe { (*$USARTX::ptr()).cr1.modify(|_, w| w.txeie().clear_bit()) };
                 }
+                pub fn clear_event(&mut self) {
+                    unsafe {
+                        (*$USARTX::ptr()).sr.read();
+                        (*$USARTX::ptr()).dr.read();
+                    }
+                }
+                pub fn which_event(&mut self) -> Option<Event> {
+                    let cr = unsafe{ (*$USARTX::ptr()).cr1.read() };
+                    let sr = unsafe{ (*$USARTX::ptr()).sr.read() };
+                    
+                    let event = if sr.txe().bit_is_set() && cr.txeie().bit_is_set() {
+                        Some(Event::Txe)
+                    } else if sr.tc().bit_is_set() && cr.tcie().bit_is_set() {
+                        Some(Event::Tc)
+                    } else {
+                        None
+                    };
+                    event
+                }
             }
 
             impl Rx<$USARTX> {
-                pub fn listen(&mut self) {
-                    unsafe { (*$USARTX::ptr()).cr1.modify(|_, w| w.rxneie().set_bit()) };
+                pub fn is_nempty(&mut self) -> bool {
+                    let sr = unsafe{ (*$USARTX::ptr()).sr.read() };
+
+                    sr.rxne().bit_is_set()
+
+                }
+                pub fn listen(&mut self, event: Event) {
+                    match event {
+                        Event::Rxne => unsafe { (*$USARTX::ptr()).cr1.modify(|_, w| w.rxneie().set_bit()) }, 
+                        Event::Idle => unsafe { (*$USARTX::ptr()).cr1.modify(|_, w| w.idleie().set_bit()) },
+                        _ => (),
+                    }
                 }
 
-                pub fn unlisten(&mut self) {
-                    unsafe { (*$USARTX::ptr()).cr1.modify(|_, w| w.rxneie().clear_bit()) };
+                pub fn unlisten(&mut self, event: Event) {
+                    match event {
+                        Event::Rxne => unsafe { (*$USARTX::ptr()).cr1.modify(|_, w| w.rxneie().clear_bit()) },
+                        Event::Idle => unsafe { (*$USARTX::ptr()).cr1.modify(|_, w| w.idleie().clear_bit()) },
+                        _ => (),
+                    }
+                }
+
+                pub fn which_event(&mut self) -> Option<Event> {
+                    let cr = unsafe{ (*$USARTX::ptr()).cr1.read() };
+                    let sr = unsafe{ (*$USARTX::ptr()).sr.read() };
+                    
+                    let event = if sr.rxne().bit_is_set() && cr.rxneie().bit_is_set() {
+                        Some(Event::Rxne)
+                    } else if sr.idle().bit_is_set() && cr.idleie().bit_is_set() {
+                        Some(Event::Idle)
+                    } else {
+                        None
+                    };
+                    event
+                }
+
+                pub fn clear_event(&mut self) {
+                    unsafe {
+                        (*$USARTX::ptr()).sr.read();
+                        (*$USARTX::ptr()).dr.read();
+                    }
                 }
             }
 
@@ -599,6 +659,12 @@ macro_rules! serialdma {
                         channel
                     )
                 }
+                pub fn clear_event(&mut self) {
+                    self.payload.clear_event();
+                }
+                pub fn which_event(&mut self) -> Option<Event> {
+                    self.payload.which_event()
+                }
             }
 
             impl $txdma {
@@ -609,6 +675,12 @@ macro_rules! serialdma {
                         payload,
                         channel,
                     )
+                }
+                pub fn clear_event(&mut self) {
+                    self.payload.clear_event();
+                }
+                pub fn which_event(&mut self) -> Option<Event> {
+                    self.payload.which_event()
                 }
             }
 
